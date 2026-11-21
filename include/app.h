@@ -59,7 +59,7 @@ https://github.com/rhaleblian/dslibris
 #include "main.h"
 #include "parse.h"
 
-#define APP_BROWSER_BUTTON_COUNT 7
+#define APP_BROWSER_BUTTON_COUNT 4
 #define APP_LOGFILE "dslibris.log"
 #define APP_MODE_BOOK 0
 #define APP_MODE_BROWSER 1
@@ -69,12 +69,15 @@ https://github.com/rhaleblian/dslibris
 #define APP_MODE_PREFS_FONT_ITALIC 5
 #define APP_URL "http://github.com/rhaleblian/dslibris"
 
-#define PREFS_BUTTON_COUNT 5
+#define PREFS_BUTTON_COUNT 8
 #define PREFS_BUTTON_FONT 2
 #define PREFS_BUTTON_FONT_ITALIC 3
 #define PREFS_BUTTON_FONT_BOLD 4
 #define PREFS_BUTTON_FONTSIZE 1
 #define PREFS_BUTTON_PARASPACING 0
+#define PREFS_BUTTON_THEME 5
+#define PREFS_BUTTON_ANIMATION 6
+#define PREFS_BUTTON_REOPEN 7
 
 
 //! \brief Main application.
@@ -126,6 +129,10 @@ class App {
 	//! not used yet; will contain pagination indices for caching.
 	vector<u16> pageindices;
 	u8 orientation;
+	int readingTheme;
+	bool pageAnimation;
+	u8 prefsPage;
+	Button prefsButtonTheme, prefsButtonAnimation, prefsButtonReopen;
 	u8 paraspacing, paraindent;
 	
 	Button prefsButtonBooks;
@@ -179,6 +186,9 @@ class App {
 	
 	//! in App_Book.cpp
 	void HandleEventInBook();
+	void TurnPage(int direction);
+	void ApplyTheme();
+	void DrawCompanion();
 	int  GetBookIndex(Book*);
 	void AttemptBookOpen();
 	u8   OpenBook(void);

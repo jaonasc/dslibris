@@ -1,6 +1,8 @@
 #ifndef _text_h
 #define _text_h
 
+#include <nds.h>
+
 #include <string>
 #include <map>
 
@@ -170,6 +172,7 @@ class Text {
 
 public:
 	App *app;
+	u16 paperColor, inkColor;
 	int pixelsize;
 	//! Not used ... really.
 	struct { u8 r; u8 g; u8 b; } bgcolor;
@@ -227,6 +230,7 @@ public:
 	void SetPixelSize(u8 size);
 	bool SetFace(u8 style);
 	void SetFontFile(const char *filename, u8 style);
+	bool SelectFont(const char *filename, u8 style);
 	void SetScreen(u16 *s);
 	inline void SetStyle(int astyle) { style = astyle; face = faces[style]; }
 	

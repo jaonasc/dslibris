@@ -23,6 +23,7 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
 #include <iostream>
 #include <sstream>
 #include <sys/param.h>
+#include <set>
 
 #include "nds.h"
 #include "fat.h"
@@ -33,6 +34,7 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
 #include "main.h"
 #include "version.h"
 #include "text.h"
+#include "reader_visual.h"
 
 extern char msg[];
 std::stringstream ss;
@@ -43,6 +45,7 @@ void Text::CopyScreen(u16 *src, u16 *dst) {
 
 Text::Text()
 {
+	library=NULL;
 	display.height = PAGE_HEIGHT;
 	display.width = PAGE_WIDTH;
 	filenames[TEXT_STYLE_REGULAR] = FONTREGULARFILE;
@@ -52,7 +55,9 @@ Text::Text()
 	filenames[TEXT_STYLE_SPLASH] = FONTSPLASHFILE;
 	screenleft = (u16*)BG_BMP_RAM_SUB(0);
 	screenright = (u16*)BG_BMP_RAM(0);
-	offscreen = new u16[display.width * display.height];
+	offscreen = new u16[SCREEN_WIDTH * SCREEN_WIDTH];
+	paperColor = ReaderVisual::palette(ReaderVisual::PAPER).paper;
+	inkColor = ReaderVisual::palette(ReaderVisual::PAPER).ink;
 	margin.left = MARGINLEFT;
 	margin.right = MARGINRIGHT;
 	margin.top = MARGINTOP;
@@ -93,7 +98,7 @@ Text::Text()
 Text::~Text()
 {
 	// framebuffers
-	free(offscreen);
+	delete[] offscreen;
 	
 	// homemade cache
 	ClearCache();
@@ -104,10 +109,10 @@ Text::~Text()
 	textCache.clear();
 	
 	// FreeType
-	for (map<u8, FT_Face>::iterator iter = faces.begin(); iter != faces.end(); iter++) {
-		FT_Done_Face(iter->second);
-	}
-	FT_Done_FreeType(library);
+	std::set<FT_Face> unique;
+	for(auto entry:faces) if(entry.second) unique.insert(entry.second);
+	for(auto f:unique) FT_Done_Face(f);
+	if(library) FT_Done_FreeType(library);
 }
 
 static FT_Error
@@ -166,9 +171,9 @@ FT_Error Text::InitFreeTypeCache(void) {
 
 FT_Error Text::CreateFace(int style) {
 	std::string path = std::string(FONTDIR) + "/" + filenames[style];
-	FT_Error err = FT_New_Face(library, path.c_str(), 0, &face);
-	if (!err)
-		faces[style] = face;
+	FT_Face replacement=NULL;
+	FT_Error err = FT_New_Face(library, path.c_str(), 0, &replacement);
+	if (!err) {faces[style]=replacement;face=replacement;}
 	return err;
 }
 
@@ -180,8 +185,13 @@ int Text::InitHomemadeCache(void) {
 	if (err) return err;
 	
 	err = CreateFace(TEXT_STYLE_BROWSER);
+	if(err) {filenames[TEXT_STYLE_BROWSER]=FONTBROWSERFILE;err=CreateFace(TEXT_STYLE_BROWSER);}
+	if(err) return err;
 	err = CreateFace(TEXT_STYLE_SPLASH);
+	if(err) faces[TEXT_STYLE_SPLASH]=faces[TEXT_STYLE_BROWSER];
 	err = CreateFace(TEXT_STYLE_REGULAR);
+	if(err) {filenames[TEXT_STYLE_REGULAR]=FONTREGULARFILE;err=CreateFace(TEXT_STYLE_REGULAR);}
+	if(err) return err;
 	err = CreateFace(TEXT_STYLE_ITALIC);
 	if (err)
 		faces[TEXT_STYLE_ITALIC] = faces[TEXT_STYLE_REGULAR];
@@ -192,7 +202,7 @@ int Text::InitHomemadeCache(void) {
 	std::map<u8, FT_Face>::iterator iter;
 	for (iter = faces.begin(); iter != faces.end(); iter++) {
 		FT_Set_Pixel_Sizes(iter->second, 0, pixelsize);
-		textCache.insert(make_pair(iter->second, new Cache()));
+		if(textCache.find(iter->second)==textCache.end()) textCache.insert(make_pair(iter->second,new Cache()));
 	}
 
 	screen = screenleft;
@@ -205,6 +215,15 @@ int Text::InitHomemadeCache(void) {
 
 int Text::Init()
 {
+	if(library) {
+		ClearCache();
+		std::set<FT_Face> unique;
+		for(auto entry:faces) unique.insert(entry.second);
+		for(auto f:unique) {delete textCache[f];FT_Done_Face(f);}
+		textCache.clear();faces.clear();FT_Done_FreeType(library);
+		library=NULL;
+		initialized=false;
+	}
 	if(ftc)
 		return InitFreeTypeCache();
 	else
@@ -359,9 +378,11 @@ void Text::ClearCache(u8 style)
 
 void Text::ClearCache(FT_Face face)
 {
+	if(!face || textCache.find(face)==textCache.end()) return;
 	//textCache[face]->cachenext = 0;
 	map<u16, FT_GlyphSlot>::iterator iter;   
 	for(iter = textCache[face]->cacheMap.begin(); iter != textCache[face]->cacheMap.end(); iter++) {
+		delete[] iter->second->bitmap.buffer;
 		delete iter->second;
 	}
 
@@ -370,19 +391,16 @@ void Text::ClearCache(FT_Face face)
 
 void Text::ClearScreen()
 {
-	if(invert) memset((void*)screen,0,PAGE_WIDTH*PAGE_HEIGHT*4);
-	else memset((void*)screen,255,PAGE_WIDTH*PAGE_HEIGHT*4);
+	for (int i=0;i<SCREEN_WIDTH*SCREEN_WIDTH;++i) screen[i]=paperColor;
 }
 
 void Text::ClearRect(u16 xl, u16 yl, u16 xh, u16 yh)
 {
-	u16 clearcolor;
-	if(invert) clearcolor = RGB15(0,0,0) | BIT(15);
-	else clearcolor = RGB15(31,31,31) | BIT(15);
+	u16 clearcolor = paperColor;
 	//uint word = (clearcolor << 16) | clearcolor;
-	for(u16 y=yl; y<yh; y++) {
+	for(u16 y=yl; y<yh && y<PAGE_HEIGHT; y++) {
 //		memcpy((void*)screen[y*display.height+xl],(void*)word,xh-xl/2);
-		for(u16 x=xl; x<xh; x++) {
+		for(u16 x=xl; x<xh && x<PAGE_WIDTH; x++) {
 			// FIXME: crashes on hw
 			screen[y*display.height+x] = clearcolor;
 		}
@@ -409,44 +427,22 @@ u8 Text::GetStringWidth(const char *txt, FT_Face face)
 }
 
 u8 Text::GetCharCountInsideWidth(const char *txt, u8 style, u8 pixels) {
-	u8 n = 0;
-	u8 width = 0;
-	const char *c;
-	for(c = txt; c != NULL; c++)
-	{
-		u32 ucs = 0;
-		GetCharCode(c, &ucs);
-		width += GetAdvance(ucs, GetFace(style));
-		if (width > pixels) return n;
-		n++;
+	unsigned int n=0, width=0;
+	while (txt[n] && n<255) {
+		u32 ucs=0;
+		unsigned int bytes=GetCharCode(txt+n,&ucs);
+		if (!bytes || n+bytes>255 || ucs=='\n') break;
+		unsigned int advance=GetAdvance(ucs,GetFace(style));
+		if(width+advance>pixels) break;
+		width+=advance;n+=bytes;
 	}
-	return n;
+	return (u8)n;
 }
 
 u8 Text::GetCharCode(const char *utf8, u32 *ucs) {
-	//! Given a UTF-8 encoding, fill in the Unicode/UCS code point.
-	//! Return the bytelength of the encoding, for advancing
-	//! to the next character; 0 if encoding could not be translated.
-	
-	// TODO - handle 4 byte encodings.
-
-	if (utf8[0] < 0x80) { // ASCII
-		*ucs = utf8[0];
-		return 1;
-
-	} else if (utf8[0] > 0xc1 && utf8[0] < 0xe0) { // latin
-		*ucs = ((utf8[0]-192)*64) + (utf8[1]-128);
-		return 2;
-
-	} else if (utf8[0] > 0xdf && utf8[0] < 0xf0) { // asian
-		*ucs = (utf8[0]-224)*4096 + (utf8[1]-128)*64 + (utf8[2]-128);
-		return 3;
-
-	} else if (utf8[0] > 0xef) { // rare
-		return 4;
-
-	}
-	return 0;
+    unsigned int code=0;
+    int bytes=ReaderVisual::utf8Next(utf8,code);
+    *ucs=code;return bytes;
 }
 
 u8 Text::GetHeight() {
@@ -588,7 +584,8 @@ void Text::PrintChar(u32 ucs, FT_Face face) {
 	// into the current screen buffer at the current pen position.
 
 	// static bool firsttime = true;
-	u16 bx, by, width, height = 0;
+	int bx=0, by=0;
+	u16 width=0, height=0;
 	FT_Byte *buffer = NULL;
 	FT_UInt advance = 0;
 	FTC_Node anode = nullptr;
@@ -713,27 +710,10 @@ void Text::PrintChar(u32 ucs, FT_Face face) {
 		for (gx=0; gx<width; gx++) {
 			u8 a = buffer[gy*width+gx];
 			if (a) {
-				u16 sx = (pen.x+gx+bx);
-				u16 sy = (pen.y+gy-by);
-				if(usebgcolor) {
-					u32 r,g,b;
-					u8 alpha = 255-a;
-					r = (bgcolor.r * alpha);
-					g = (bgcolor.g * alpha);
-					b = (bgcolor.b * alpha);
-					screen[sy*display.height+sx]
-						= RGB15(r/256,g/256,b/256) | BIT(15);
-				} else {
-					u8 l;
-					if (invert) l = a >> 3;
-					else l = (255-a) >> 3;
-#ifdef DEBUG_CACHE
-					// Draw cache hits in red.
-					if(!hit)
-						screen[sy*display.height+sx] = RGB15(l,0,0) | BIT(15);
-					else
-#endif
-					screen[sy*display.height+sx] = RGB15(l,l,l) | BIT(15);
+				int sx = pen.x+gx+bx, sy = pen.y+gy-by;
+				if(sx>=0 && sy>=0 && sx<display.width && sy<display.height) {
+					u16* pixel=screen+sy*SCREEN_WIDTH+sx;
+					*pixel=ReaderVisual::blend(*pixel,inkColor,a);
 				}
 			}
 		}
@@ -783,14 +763,15 @@ void Text::PrintString(const char *s, FT_Face face) {
 	//! Render a character string starting at the pen position.
 	//app->Log(s);
 	//u32 clast = 0;
-	u8 i=0;
+	size_t i=0;
 	while(i<strlen((char*)s)) {
 		u32 c = s[i];
 		if (c == '\n') {
 			PrintNewLine();
 			i++;
 		} else {
-			i+=GetCharCode(&(s[i]),&c);
+			u8 bytes=GetCharCode(&(s[i]),&c);
+			i+=bytes?bytes:1;
 			PrintChar(c, face);
 			//clast = c;
 		}
@@ -832,28 +813,31 @@ void Text::ClearScreen(u16 *screen, u8 r, u8 g, u8 b)
 		screen[i] = RGB15(r,g,b) | BIT(15);
 }
 
-void Text::PrintSplash(u16 *screen)
-{
-	u8 size = GetPixelSize();
-	u16* s = GetScreen();
-	
-	SetScreen(screen);
-	drawstack(screen);
-	sprintf(msg,"%s",VERSION);
-	PrintStatusMessage(msg);
-	
-	SetPixelSize(size);
-	SetInvert(invert);
-	SetScreen(s);
-	
-	swiWaitForVBlank();
-}
+void Text::PrintSplash(u16*) { app->DrawCompanion(); }
 
 void Text::SetFontFile(const char *filename, u8 style)
 {
 	if(!strcmp(filenames[style].c_str(),filename)) return;
 	filenames[style] = filename;
 	if(initialized) ClearCache(style);
+}
+
+bool Text::SelectFont(const char* filename,u8 selectedStyle) {
+	// Validate a replacement before releasing the working font or changing XML.
+	std::string path=std::string(FONTDIR)+"/"+filename;
+	FT_Face replacement=NULL;
+	if(FT_New_Face(library,path.c_str(),0,&replacement)) return false;
+	if(FT_Set_Pixel_Sizes(replacement,0,pixelsize)) {FT_Done_Face(replacement);return false;}
+	FT_Face old=faces[selectedStyle];
+	bool shared=false;
+	for(auto entry:faces) if(entry.first!=selectedStyle && entry.second==old) shared=true;
+	if(!shared) {
+		ClearCache(old);delete textCache[old];textCache.erase(old);FT_Done_Face(old);
+	}
+	faces[selectedStyle]=replacement;textCache[replacement]=new Cache();
+	filenames[selectedStyle]=filename;
+	if(style==selectedStyle) face=replacement;
+	return true;
 }
 
 string Text::GetFontFile(u8 style)

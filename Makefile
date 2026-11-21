@@ -5,9 +5,9 @@
 DEVKITPRO ?= /opt/devkitpro
 DEVKITARM ?= /opt/devkitpro/devkitARM
 
-GAME_TITLE := dslibris
-GAME_SUBTITLE1 := An EPUB reader for Nintendo DS
-GAME_SUBTITLE2 := Yoyodyne Research
+GAME_TITLE := DSLibris Modern
+GAME_SUBTITLE1 := Leitura do seu jeito
+GAME_SUBTITLE2 := Based on DSLibris
 GAME_ICON := $(PWD)/gfx/icon.bmp
 
 include $(DEVKITARM)/ds_rules
@@ -18,7 +18,7 @@ include $(DEVKITARM)/ds_rules
 # SOURCES is a list of directories containing source code
 # INCLUDES is a list of directories containing extra header files
 #---------------------------------------------------------------------------------
-TARGET		:=	$(shell basename $(CURDIR))
+TARGET		:=	dslibris-modern
 BUILD		:=	build
 SOURCES		:=	gfx source data  
 INCLUDES	:=	include build

@@ -19,6 +19,7 @@
  */
 
 #include "page.h"
+#include "app.h"
 #include <string.h>
 #include <list>
 
@@ -32,15 +33,16 @@ Page::Page(Book *b)
 
 Page::~Page()
 {
-	if(buf) delete buf;
+	if(buf) delete[] buf;
 }
 
 u8 Page::SetBuffer(u8 *src, u16 len)
 {
 	//! Write to offscreen buffer. NYI
-	if(buf) delete buf;
-	buf = new u8[len];
-	strncpy((char*)buf, (char*)src, len);
+	if(buf) delete[] buf;
+	buf = new u8[len+1];
+	memcpy(buf,src,len);
+	buf[len]=0;
 	length = len;
 	return 0;
 }
@@ -61,7 +63,7 @@ void Page::Draw()
 
 void Page::Draw(Text *ts)
 {
-	iprintf("hi\n");
+	ts->app->ApplyTheme();
 	//! Write to offscreen buffer, then blit to video memory, for both screens.
 	ts->InitPen();
 	ts->linebegan = false;

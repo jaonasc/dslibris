@@ -4,7 +4,7 @@
 #include <expat.h>
 #include "book.h"
 
-#define PAGEBUFSIZE 2048
+#define PAGEBUFSIZE 8192
 
 //! Symbols for known XHTML tags.
 
@@ -45,6 +45,7 @@ typedef struct {
 	int status;
 	int totalbytes;
 	int pagecount;
+	bool preferencesBookPass;
 } parsedata_t;
 
 //! Expat callbacks for parsing XHTML.
@@ -67,6 +68,7 @@ void title_end_hndl(void *data, const char *el);
 bool iswhitespace(u8 c);
 
 void parse_init(parsedata_t *data);
+bool parse_append(parsedata_t *data,u8 value);
 void parse_printerror(XML_Parser p);
 
 #endif

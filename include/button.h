@@ -19,6 +19,7 @@ class Button {
 	//! intended for the author name.
 	std::string text2;
 	Text *ts;
+	int iconKind;
 
  public:
 	Button();
@@ -32,6 +33,7 @@ class Button {
 	void Draw(u16 *fb, bool highlight);
 	void Move(u16 x, u16 y);
 	void Resize(u16 x, u16 y);
+	void SetIcon(int icon) { iconKind = icon; }
 	bool EnclosesPoint(u16 x, u16 y);
 };
 

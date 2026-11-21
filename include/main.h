@@ -41,7 +41,7 @@
 #define FONTDIR "Font"
 #define BOOKDIR "Book"
 #define LOGFILEPATH "dslibris.log"
-#define PREFSPATH "dslibris.xml"
+#define PREFSPATH "dslibris-modern.xml"
 
 #define FONTREGULARFILE "LiberationSerif-Regular.ttf"
 #define FONTBOLDFILE "LiberationSerif-Bold.ttf"

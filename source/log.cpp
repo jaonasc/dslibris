@@ -20,6 +20,7 @@ void Log(std::string msg)
 void Log(const char *format, const char *msg)
 {
 	FILE *logfile = fopen(LOGFILEPATH, "a");
+	if(!logfile) return;
 	fprintf(logfile,format,msg);
 	fclose(logfile);
 }

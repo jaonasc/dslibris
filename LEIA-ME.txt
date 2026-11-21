@@ -1,0 +1,80 @@
+DSLIBRIS MODERN - versao experimental para Nintendo DS / DSi
+Revisao de estabilidade: 21/11/2026.
+Base: DSLibris v1.5.2-2, de Ray Haleblian e colaboradores.
+
+INSTALACAO
+Para TWiLight Menu++: extraia o conteudo na raiz do SD e abra
+dslibris-modern.nds normalmente pelo menu, com as configuracoes padrao.
+As pastas Font e Book precisam ficar na raiz do mesmo cartao.
+1. Extraia dslibris-modern.nds, Font e Book na raiz do cartao SD usado
+   pelo seu carregador de homebrew. Nao coloque tudo dentro de uma subpasta.
+2. Se voce ja tem Font e Book, mantenha seus livros e suas fontes.
+3. Abra dslibris-modern.nds pelo carregador que voce ja utiliza.
+   O arquivo dslibris.nds original nao precisa ser substituido.
+4. Flashcarts antigos podem exigir patch DLDI correspondente ao cartucho.
+   O pacote principal nao vem com um driver de cartucho especifico aplicado.
+
+NOVIDADES
+- Biblioteca com cartoes arredondados, icones e quatro livros por tela.
+- Botoes maiores: linhas de 38 pixels e navegacao de 28 pixels.
+- Menus em portugues, com ajustes divididos em duas paginas.
+- Temas claro, escuro, preto e papel amarelado.
+- Letras com antialiasing sobre a cor real do papel.
+- Virada de folha 2D: deslizamento, borda e sombra, em ambos os sentidos.
+- Opcao de desativar a animacao nos ajustes.
+- Tela de apoio com atalhos e identificacao do tema.
+
+CONTROLES
+O leitor conserva a orientacao de livro do DSLibris: segure o console
+de lado. Os controles direcionais acompanham a orientacao configurada.
+
+Biblioteca: A abre o livro; SELECT abre Ajustes; toque seleciona/abre.
+Nas listas: L/R ou os direcionais usados pela orientacao percorrem itens.
+Ajustes: A muda a opcao selecionada; toque muda diretamente.
+Tamanho/espacamento: toque na metade esquerda para diminuir, direita
+para aumentar; os direcionais de ajuste tambem funcionam.
+Use Prox./Ant. para alternar as duas paginas de ajustes.
+B ou START volta para a biblioteca.
+
+Durante a leitura:
+A / R / direcional de avancar: proxima pagina.
+B / L / direcional de voltar: pagina anterior.
+Toque nas metades da tela: voltar/avancar, conforme a orientacao.
+X: alternar entre os quatro temas.
+Y: alterar brilho nos modelos em que esse controle e suportado.
+SELECT: adicionar/remover marcador.
+START: voltar para a biblioteca.
+
+PREFERENCIAS
+As novas opcoes ficam em dslibris-modern.xml, criado automaticamente.
+As gravacoes usam um arquivo temporario e mantem a ultima copia em
+dslibris-modern.xml.bak. Se o XML principal estiver incompleto, o leitor
+tenta recuperar o backup antes de importar as preferencias antigas.
+Se ele ainda nao existir, o leitor tenta importar dslibris.xml da versao
+anterior. O arquivo de preferencias original nao e sobrescrito.
+Para uma instalacao nova, o tema padrao e papel amarelado e a animacao
+vem ativada. O arquivo de log continua sendo dslibris.log.
+
+LIMITES DESTA VERSAO
+O efeito e uma animacao 2D leve; nao simula uma folha curva em 3D.
+Se faltar memoria para os buffers da animacao, a pagina muda diretamente.
+O leitor continua usando os formatos e a paginacao da versao original.
+Desempenho e compatibilidade com o seu DS/DSi/flashcart precisam ser
+confirmados no aparelho. Consulte VALIDACAO.md para os testes executados.
+
+CODIGO-FONTE E LICENCA
+O ZIP de codigo-fonte acompanha esta versao. Licenca GPL versao 2 ou
+posterior, conforme os cabecalhos do projeto original. Veja COPYING.
+Projeto original: https://github.com/rhaleblian/dslibris
+
+COMPILAR
+Use devkitARM/libnds e as bibliotecas FreeType, Expat, zlib, bzip2 e PNG.
+A compilacao desta variante usa o SDK da imagem oficial
+devkitpro/devkitarm:20240511. scripts/fetch-sdk.py baixa somente a camada
+do SDK e verifica seu SHA-256; scripts/build.sh compila sem instalar
+Docker. E possivel indicar DEVKITPRO para usar seu proprio SDK.
+
+Exemplo no WSL/Linux:
+python3 scripts/fetch-sdk.py /tmp/dslibris-sdk
+sh scripts/build.sh
+sh scripts/test.sh

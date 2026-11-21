@@ -21,3 +21,8 @@
 /portlibs/share
 /release.zip
 /venv
+/dist/
+__pycache__/
+*.pyc
+/previews/**/*.ppm
+/previews/*.ppm

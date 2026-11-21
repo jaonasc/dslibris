@@ -1,280 +1,141 @@
-/* 
-
-dslibris - an ebook reader for the Nintendo DS.
-
- Copyright (C) 2007-2008 Ray Haleblian
-
-This program is free software; you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation; either version 2 of the License, or
-(at your option) any later version.
-
-This program is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-GNU General Public License for more details.
-
-You should have received a copy of the GNU General Public License
-along with this program; if not, write to the Free Software
-Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
-
-*/
-
+/* DSLibris - Copyright (C) 2007-2008 Ray Haleblian.
+ * Modified for DSLibris Modern. GNU GPL v2 or later; see COPYING.
+ * Distributed without any warranty.
+ */
 #include "epub.h"
-#include <nds.h>
-#include <string.h>
-#include <stdio.h>
-#include <iostream>
-#include <vector>
 #include "main.h"
 #include "parse.h"
 #include "expat.h"
-#include "zlib.h"
 #include "unzip.h"
-#include "log.h"
+#include <cstring>
+#include <vector>
+#include <algorithm>
+#include <cctype>
 
-void epub_data_init(epub_data_t *d)
-{
-	d->type = PARSE_CONTAINER;
-	d->ctx.clear();
-	d->ctx.push_back(new std::string("TOP"));
-	d->rootfile = "";
-	d->title = "";
-	d->creator = "";
-	d->metadataonly = false;
-	d->book = NULL;
+namespace {
+struct EpubState:epub_data_t {
+    bool failed;
+    EpubState() {
+        type=PARSE_CONTAINER;book=NULL;metadataonly=false;failed=false;
+        ctx.push_back(new std::string("TOP"));
+    }
+    ~EpubState() {
+        for(auto p:ctx) delete p;
+        for(auto p:manifest) delete p;
+        for(auto p:spine) delete p;
+    }
+};
+void containerStart(void* data,const char* name,const char** attributes) {
+    EpubState* d=(EpubState*)data;
+    if(!strcmp(name,"rootfile")) for(int i=0;attributes[i];i+=2)
+        if(!strcmp(attributes[i],"full-path")) d->rootfile=attributes[i+1];
 }
-
-void epub_data_delete(epub_data_t *d)
-{
-	std::vector<std::string*>::iterator it;
-	d->manifest.clear();
-	d->spine.clear();
-	while(d->ctx.back()) d->ctx.pop_back();
+void metadataStart(void* data,const char* name,const char** attributes) {
+    EpubState* d=(EpubState*)data;
+    if(d->failed) return;
+    if(d->ctx.size()>=64) {d->failed=true;return;}
+    const std::string parent=d->ctx.empty()?"":*d->ctx.back();
+    std::string element=name;
+    if((parent=="manifest" || parent=="opf:manifest") && (element=="item" || element=="opf:item")) {
+        epub_item* item=new epub_item();d->manifest.push_back(item);
+        for(int i=0;attributes[i];i+=2) {
+            if(!strcmp(attributes[i],"id")) item->id=attributes[i+1];
+            else if(!strcmp(attributes[i],"href")) item->href=attributes[i+1];
+        }
+    } else if((parent=="spine" || parent=="opf:spine") && (element=="itemref" || element=="opf:itemref")) {
+        epub_itemref* ref=new epub_itemref();d->spine.push_back(ref);
+        for(int i=0;attributes[i];i+=2) if(!strcmp(attributes[i],"idref")) ref->idref=attributes[i+1];
+    }
+    d->ctx.push_back(new std::string(element));
 }
-
-void epub_container_start(void *data, const char *el, const char **attr)
-{
-	epub_data_t *d = (epub_data_t*)data;
-	if(!strcmp(el,"rootfile"))
-		for(int i=0;attr[i];i+=2)
-			if(!strcmp(attr[i],"full-path"))
-				d->rootfile = attr[i+1];
+void metadataEnd(void* data,const char*) {
+    EpubState* d=(EpubState*)data;
+    if(d->failed || d->ctx.size()<=1) return;
+    delete d->ctx.back();d->ctx.pop_back();
 }
-
-void epub_rootfile_start(void *data, const char *el, const char **attr) {
-	epub_data_t *d = (epub_data_t*)data;
-	std::string elem = el;
-	std::string *ctx = d->ctx.back();
-	if (!ctx) return;
-	
-	if(	(*ctx == "manifest" || *ctx == "opf:manifest")
-	&& 	(elem == "item" || elem == "opf:item") ) {
-		epub_item *item = new epub_item;
-		d->manifest.push_back(item);
-		for(int i=0;attr[i];i+=2) {
-			if(!strcmp(attr[i],"id"))
-				item->id = attr[i+1];
-			if(!strcmp(attr[i],"href"))
-				item->href = attr[i+1];
-		}
-	}
-
-	else if (	(*ctx == "spine" || *ctx == "opf:spine")
-	&& 	(elem == "itemref" || elem == "opf:itemref") )
-	{
-		epub_itemref *itemref = new epub_itemref;
-		d->spine.push_back(itemref);
-		for(int i=0;attr[i];i+=2) {
-			if(!strcmp(attr[i],"idref"))
-				itemref->idref = attr[i+1];
-		}
-	}
-
-	else if ( elem == "dc:title" ) {
-		d->title.clear();
-	}
-	
-	else if ( elem == "dc:creator" ) {
-		d->creator.clear();
-	}
-	
-	d->ctx.push_back(new std::string(elem));
+void metadataText(void* data,const char* text,int size) {
+    EpubState* d=(EpubState*)data;
+    if(d->failed || d->ctx.empty()) return;
+    if(*d->ctx.back()=="dc:title") d->title.append(text,size);
+    else if(*d->ctx.back()=="dc:creator") d->creator.append(text,size);
 }
-
-void epub_rootfile_end(void *data, const char *el) {
-   	epub_data_t *d = (epub_data_t*)data;
-	d->ctx.pop_back();
+int parseCurrent(unzFile zip,EpubState& state) {
+    XML_Parser parser=XML_ParserCreate(NULL);
+    if(!parser) return -1;
+    parsedata_t content;
+    if(state.type==PARSE_CONTENT) {
+        parse_init(&content);content.book=state.book;
+        XML_SetUserData(parser,&content);
+        XML_SetElementHandler(parser,start_hndl,end_hndl);
+        XML_SetCharacterDataHandler(parser,char_hndl);
+        XML_SetDefaultHandler(parser,default_hndl);
+        XML_SetProcessingInstructionHandler(parser,proc_hndl);
+    } else {
+        XML_SetUserData(parser,&state);
+        if(state.type==PARSE_CONTAINER) XML_SetStartElementHandler(parser,containerStart);
+        else {
+            XML_SetElementHandler(parser,metadataStart,metadataEnd);
+            XML_SetCharacterDataHandler(parser,metadataText);
+        }
+    }
+    std::vector<char> buffer(BUFSIZE);
+    int result=0;
+    while(true) {
+        int bytes=unzReadCurrentFile(zip,&buffer[0],buffer.size());
+        if(bytes<0) {result=bytes;break;}
+        if(XML_Parse(parser,&buffer[0],bytes,bytes==0)==XML_STATUS_ERROR) {result=-2;break;}
+        if(state.failed || (state.type==PARSE_CONTENT && content.status>=2)) {result=-3;break;}
+        if(!bytes) break;
+    }
+    XML_ParserFree(parser);
+    return result;
 }
-
-void epub_rootfile_char(void *data, const XML_Char *txt, int len) {
-   	epub_data_t *d = (epub_data_t*)data;
-	std::string *ctx = d->ctx.back();
-	if (!ctx) return;
-	
-	if ( *ctx == "dc:title" ) {
-		d->title.append((char*)txt,len);
-	}
-	else if ( *ctx == "dc:creator" ) {
-		d->creator.append((char*)txt,len);
-	}
+int readEntry(unzFile zip,const std::string& name,EpubState& state) {
+    int result=unzLocateFile(zip,name.c_str(),0);
+    if(result) return result;
+    result=unzOpenCurrentFile(zip);if(result) return result;
+    result=parseCurrent(zip,state);
+    int closed=unzCloseCurrentFile(zip);
+    return result?result:closed;
 }
-
-int epub_parse_currentfile(unzFile uf, epub_data_t *epd)
-{
-	int rc = 0;
-	parsedata_t pd;
-	char *filebuf = new char[BUFSIZE];
-	XML_Parser p = XML_ParserCreate(NULL);
-	if(epd->type == PARSE_CONTAINER) {
-		XML_SetUserData(p, epd);
-		XML_SetElementHandler(p, epub_container_start, NULL);
-	}
-	else if(epd->type == PARSE_ROOTFILE) {
-		XML_SetUserData(p, epd);
-		XML_SetElementHandler(p, epub_rootfile_start, epub_rootfile_end);
-		XML_SetCharacterDataHandler(p, epub_rootfile_char);
-	}
-	else {
-		parse_init(&pd);
-		pd.book = epd->book;
-		XML_SetUserData(p, &pd);
-		XML_SetElementHandler(p, start_hndl, end_hndl);
-		XML_SetCharacterDataHandler(p, char_hndl);
-		XML_SetDefaultHandler(p, default_hndl);
-		XML_SetProcessingInstructionHandler(p, proc_hndl);
-	}
-	size_t len, len_total=0;
-	char msg[64];
-	enum XML_Status status;
-	do {
-		len = unzReadCurrentFile(uf,filebuf,BUFSIZE);
-		status = XML_Parse(p, filebuf, len, len == 0);
-		if (status == XML_STATUS_ERROR) {
-			sprintf(msg,"error: expat %d\n", status); Log(msg);
-			rc = status;
-			break;
-		}
-		len_total += len;
-		sprintf(msg,"progr: %d byte chunk\n",len); Log(msg);
-	} while (len);
-	sprintf(msg,"info : read %d bytes total\n",len_total); Log(msg);
-	XML_ParserFree(p);
-	delete [] filebuf;
-	return(rc);
+struct ZipScope {
+    unzFile file;
+    explicit ZipScope(unzFile f):file(f) {}
+    ~ZipScope() {if(file) unzClose(file);}
+};
 }
-
-int epub(Book *book, std::string name, bool metadataonly)
-{
-	//! Parse EPUB file.
-	//! Set metadataonly to true if you only want the title and author.
-	int rc = 0;
-	static epub_data_t parsedata;
-	
-	unzFile uf = unzOpen(name.c_str());
-	rc = unzLocateFile(uf,"META-INF/container.xml",0);
-	if(rc == UNZ_OK)
-	{
-		rc = unzOpenCurrentFile(uf);
-		epub_data_init(&parsedata);
-		parsedata.type = PARSE_CONTAINER;
-		rc = epub_parse_currentfile(uf, &parsedata);
-		rc = unzCloseCurrentFile(uf);
-	}
-	
-	Log("info : rootfile "); Log(parsedata.rootfile); Log("\n");
-	
-	// Extract any leading path for the rootfile.
-	// The manifest in the rootfile will list filenames
-	// relative to the rootfile location.
-	std::string folder = "";
-	size_t pos = parsedata.rootfile.find_last_of("/",parsedata.rootfile.length());
-	if(pos < parsedata.rootfile.length()) {
-		folder = parsedata.rootfile.substr(0,pos);
-	}
-
-	Log("progr: parsing rootfile\n");
-
-	rc = unzLocateFile(uf,parsedata.rootfile.c_str(),0);
-	if(rc == UNZ_OK)
-	{
-		rc = unzOpenCurrentFile(uf);
-		epub_data_init(&parsedata);
-		parsedata.type = PARSE_ROOTFILE;
-		epub_parse_currentfile(uf, &parsedata);
-		rc = unzCloseCurrentFile(uf);
-	}
-
-	// Stop here if only metadata is required.
-	if(metadataonly) {
-		Log("progr: metadata only\n");
-		if(parsedata.title.length()) {
-			book->SetTitle(parsedata.title.c_str());
-			if(parsedata.creator.length())
-				book->SetAuthor(parsedata.creator);
-		}
-		unzClose(uf);
-		epub_data_delete(&parsedata);
-		return rc;
-	}
-
-	Log("progr: ordering sections\n");
-
-	// Read the XHTML in the manifest, ordering by spine if needed.
-	parsedata.ctx.clear();
-	parsedata.book = book;
-	parsedata.type = PARSE_CONTENT;
-	vector<std::string*> href;
-	if(parsedata.spine.size()) {
-		// Use spine for reading order.
-		Log("progr: ordering by spine\n");
-		vector<epub_itemref*>::iterator itemref;
-		for(itemref=parsedata.spine.begin();
-			itemref!=parsedata.spine.end();
-			itemref++) {
-			vector<epub_item*>::iterator item;
-			for(item=parsedata.manifest.begin();
-				item!=parsedata.manifest.end();
-				item++) {
-				if((*item)->id == (*itemref)->idref) {
-					std::string *h = new std::string((*item)->href);
-					href.push_back(h);
-				}
-			}
-		}
-	}
-	else {
-		Log("progr: ordering by manifest\n");
-		vector<epub_item*>::iterator item;
-		for(item=parsedata.manifest.begin();
-			item!=parsedata.manifest.end();
-			item++)
-			href.push_back(new std::string((*item)->href));
-	}
-	
-	Log("progr: catenating sections\n");
-	
-	vector<std::string*>::iterator it;
-	for(it=href.begin();it!=href.end();it++)
-	{
-		size_t pos = (*it)->find_last_of('.');
-		if (pos < (*it)->length())
-		{
-			std::string ext = (*it)->substr(pos);
-			std::string path = folder;
-			if(path.length()) path += "/";
-			path += (*it)->c_str();
-			Log("info : content "); Log(path); Log("\n");
-			rc = unzLocateFile(uf,path.c_str(),0);
-			if(rc == UNZ_OK)
-			{
-				rc = unzOpenCurrentFile(uf);
-				epub_parse_currentfile(uf, &parsedata);
-				rc = unzCloseCurrentFile(uf);
-			}
-		}
-	}
-	unzClose(uf);
-	epub_data_delete(&parsedata);
-	return rc;
+int epub(Book* book,std::string filename,bool metadataOnly) {
+    ZipScope zip(unzOpen(filename.c_str()));
+    if(!zip.file) return -1;
+    EpubState state;state.book=book;
+    int error=readEntry(zip.file,"META-INF/container.xml",state);
+    if(error || state.rootfile.empty()) return error?error:-2;
+    std::string rootfile=state.rootfile;
+    size_t slash=rootfile.find_last_of('/');
+    std::string folder=slash==std::string::npos?"":rootfile.substr(0,slash+1);
+    state.type=PARSE_ROOTFILE;
+    error=readEntry(zip.file,rootfile,state);if(error) return error;
+    if(!state.title.empty()) book->SetTitle(state.title.c_str());
+    if(!state.creator.empty()) book->SetAuthor(state.creator);
+    if(metadataOnly) return 0;
+    book->Close();
+    std::vector<std::string> sections;
+    if(!state.spine.empty()) {
+        for(auto ref:state.spine) {
+            bool found=false;
+            for(auto item:state.manifest) if(item->id==ref->idref) {sections.push_back(item->href);found=true;break;}
+            if(!found) return -3;
+        }
+    } else for(auto item:state.manifest) sections.push_back(item->href);
+    state.type=PARSE_CONTENT;
+    for(std::string href:sections) {
+        size_t fragment=href.find('#');if(fragment!=std::string::npos) href.resize(fragment);
+        size_t dot=href.find_last_of('.');if(dot==std::string::npos) continue;
+        std::string extension=href.substr(dot);
+        std::transform(extension.begin(),extension.end(),extension.begin(),[](unsigned char c){return (char)tolower(c);});
+        if(extension!=".xhtml" && extension!=".html" && extension!=".htm") continue;
+        error=readEntry(zip.file,folder+href,state);
+        if(error) {book->Close();return error;}
+    }
+    return book->GetPageCount()?0:-4;
 }

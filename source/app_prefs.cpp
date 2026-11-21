@@ -1,273 +1,108 @@
-#include <errno.h>
-#include <stdlib.h>
-#include <stdlib.h>
-#include <stdint.h>
-#include <stdio.h>
-#include <sys/dir.h>
-#include <sys/stat.h>
-
-#include <expat.h>
-
-#include <fat.h>
-#include <nds/bios.h>
-
-#include "types.h"
-#include "main.h"
-#include "parse.h"
 #include "app.h"
-#include "book.h"
-#include "button.h"
-#include "text.h"
-
-#define MIN(x,y) (x < y ? x : y)
-#define MAX(x,y) (x > y ? x : y)
-
-void App::PrefsInit()
-{	
-	prefsButtonFont.Init(ts);
-	prefsButtonFont.Move(2, PREFS_BUTTON_FONT * 32);
-	PrefsRefreshButtonFont();
-	prefsButtons[PREFS_BUTTON_FONT] = &prefsButtonFont;
-	
-	prefsButtonFontBold.Init(ts);
-	prefsButtonFontBold.Move(2, PREFS_BUTTON_FONT_BOLD * 32);
-	PrefsRefreshButtonFontBold();
-	prefsButtons[PREFS_BUTTON_FONT_BOLD] = &prefsButtonFontBold;
-		
-	prefsButtonFontItalic.Init(ts);
-	prefsButtonFontItalic.Move(2, PREFS_BUTTON_FONT_ITALIC * 32);
-	PrefsRefreshButtonFontItalic();
-	prefsButtons[PREFS_BUTTON_FONT_ITALIC] = &prefsButtonFontItalic;
-	
-	prefsButtonFontSize.Init(ts);
-	prefsButtonFontSize.Move(2, PREFS_BUTTON_FONTSIZE * 32);
-	PrefsRefreshButtonFontSize();
-	prefsButtons[PREFS_BUTTON_FONTSIZE] = &prefsButtonFontSize;
-	
-	prefsButtonParaspacing.Init(ts);
-	prefsButtonParaspacing.Move(2, PREFS_BUTTON_PARASPACING * 32);
-	PrefsRefreshButtonParaspacing();
-	prefsButtons[PREFS_BUTTON_PARASPACING] = &prefsButtonParaspacing;
-	
-	prefsSelected = 0;
+#include "ui.h"
+#include <cstdio>
+using namespace ReaderVisual;
+namespace {
+const int order[2][4]={{PREFS_BUTTON_THEME,PREFS_BUTTON_FONTSIZE,PREFS_BUTTON_PARASPACING,PREFS_BUTTON_ANIMATION},
+                       {PREFS_BUTTON_FONT,PREFS_BUTTON_FONT_BOLD,PREFS_BUTTON_FONT_ITALIC,PREFS_BUTTON_REOPEN}};
 }
-
-void App::PrefsRefreshButtonFont()
-{
-	char msg[128];
-	strcpy(msg, "");
-	sprintf((char*)msg, "Regular Font:\n %s", ts->GetFontFile(TEXT_STYLE_REGULAR).c_str());
-	prefsButtonFont.Label(msg);
+void App::PrefsInit() {
+    Button* all[PREFS_BUTTON_COUNT]={&prefsButtonParaspacing,&prefsButtonFontSize,&prefsButtonFont,
+        &prefsButtonFontItalic,&prefsButtonFontBold,&prefsButtonTheme,&prefsButtonAnimation,&prefsButtonReopen};
+    for(int i=0;i<PREFS_BUTTON_COUNT;++i) {prefsButtons[i]=all[i];all[i]->Init(ts);all[i]->Resize(176,38);}
+    prefsSelected=PREFS_BUTTON_THEME;prefsPage=0;
 }
-
-void App::PrefsRefreshButtonFontBold()
-{
-	char msg[128];
-	strcpy(msg, "");
-	sprintf((char*)msg, "Bold Font:\n %s", ts->GetFontFile(TEXT_STYLE_BOLD).c_str());
-	prefsButtonFontBold.Label(msg);
+void App::PrefsRefreshButtonFont() {
+    prefsButtonFont.Label("Fonte do texto");prefsButtonFont.SetLabel2(ts->GetFontFile(TEXT_STYLE_REGULAR));prefsButtonFont.SetIcon(TYPE);
 }
-
-void App::PrefsRefreshButtonFontItalic()
-{
-	char msg[128];
-	strcpy(msg, "");
-	sprintf((char*)msg, "Italic Font:\n %s", ts->GetFontFile(TEXT_STYLE_ITALIC).c_str());
-	prefsButtonFontItalic.Label(msg);
+void App::PrefsRefreshButtonFontBold() {
+    prefsButtonFontBold.Label("Fonte em negrito");prefsButtonFontBold.SetLabel2(ts->GetFontFile(TEXT_STYLE_BOLD));prefsButtonFontBold.SetIcon(TYPE);
 }
-
-void App::PrefsRefreshButtonFontSize()
-{
-	char msg[30];
-	strcpy(msg, "");
-	if (ts->GetPixelSize() == 1)
-		sprintf((char*)msg, "Font Size:\n    [ %d >", ts->GetPixelSize());
-	else if (ts->GetPixelSize() == 255)
-		sprintf((char*)msg, "Font Size:\n    < %d ]", ts->GetPixelSize());
-	else
-		sprintf((char*)msg, "Font Size:\n    < %d >", ts->GetPixelSize());
-	prefsButtonFontSize.Label(msg);
+void App::PrefsRefreshButtonFontItalic() {
+    prefsButtonFontItalic.Label("Fonte em italico");prefsButtonFontItalic.SetLabel2(ts->GetFontFile(TEXT_STYLE_ITALIC));prefsButtonFontItalic.SetIcon(TYPE);
 }
-
-void App::PrefsRefreshButtonParaspacing()
-{
-	char msg[38];
-	strcpy(msg, "");
-	if (paraspacing == 0)
-		sprintf((char*)msg, "Paragraph Spacing:\n    [ %d >", paraspacing);
-	else if (paraspacing == 255)
-		sprintf((char*)msg, "Paragraph Spacing:\n    < %d ]", paraspacing);
-	else
-		sprintf((char*)msg, "Paragraph Spacing:\n    < %d >", paraspacing);
-	prefsButtonParaspacing.Label(msg);
+void App::PrefsRefreshButtonFontSize() {
+    char value[50];snprintf(value,sizeof(value),"<  %d px  >",ts->pixelsize);
+    prefsButtonFontSize.Label("Tamanho do texto");prefsButtonFontSize.SetLabel2(value);prefsButtonFontSize.SetIcon(TYPE);
 }
-
-void App::PrefsDraw()
-{
-	PrefsDraw(true);
+void App::PrefsRefreshButtonParaspacing() {
+    char value[50];snprintf(value,sizeof(value),"<  %d  >",paraspacing);
+    prefsButtonParaspacing.Label("Entre paragrafos");prefsButtonParaspacing.SetLabel2(value);prefsButtonParaspacing.SetIcon(SPACING);
 }
-
-void App::PrefsDraw(bool redraw)
-{
-	// save state.
-	bool invert = ts->GetInvert();
-	u8 size = ts->GetPixelSize();
-	u16* screen = ts->GetScreen();
-	int style = ts->GetStyle();
-	
-	ts->SetScreen(ts->screenright);
-	ts->SetInvert(false);
-	ts->SetStyle(TEXT_STYLE_BROWSER);
-	if (redraw) ts->ClearScreen();
-	ts->SetPixelSize(PIXELSIZE);
-	for (u8 i = 0; i < PREFS_BUTTON_COUNT; i++)
-	{
-		prefsButtons[i]->Draw(ts->screenright, i == prefsSelected);
-	}
-	
-	buttonprefs.Label("return");
-	buttonprefs.Draw(ts->screenright, false);
-
-	// restore state.
-	ts->SetStyle(style);
-	ts->SetInvert(invert);
-	ts->SetPixelSize(size);
-	ts->SetScreen(screen);
+void App::PrefsDraw() {PrefsDraw(true);}
+void App::PrefsDraw(bool) {
+    MenuScope scope(ts,ts->screenright,readingTheme);
+    PrefsRefreshButtonFont();PrefsRefreshButtonFontBold();PrefsRefreshButtonFontItalic();
+    PrefsRefreshButtonFontSize();PrefsRefreshButtonParaspacing();
+    prefsButtonTheme.Label("Tema de leitura");prefsButtonTheme.SetLabel2(ThemeName(readingTheme));prefsButtonTheme.SetIcon(SUN);
+    prefsButtonAnimation.Label("Virada de folha");prefsButtonAnimation.SetLabel2(pageAnimation?"Animada  /  toque para mudar":"Instantanea  /  toque para mudar");prefsButtonAnimation.SetIcon(SHEET);
+    prefsButtonReopen.Label("Retomar leitura");prefsButtonReopen.SetLabel2(reopen?"Abrir ultimo livro ao iniciar":"Mostrar biblioteca ao iniciar");prefsButtonReopen.SetIcon(BOOK);
+    UiHeader(ts,"Ajustes",prefsPage?"02 / Fontes e inicializacao":"01 / Conforto de leitura",readingTheme);
+    for(int row=0;row<4;++row) {
+        int i=order[prefsPage][row];prefsButtons[i]->Move(8,60+row*40);
+        prefsButtons[i]->Draw(ts->screenright,i==prefsSelected);
+    }
+    buttonprev.Label("Ant.");buttonnext.Label("Prox.");buttonprefs.Label("Voltar");
+    if(prefsPage) buttonprev.Draw(ts->screenright,false);else buttonnext.Draw(ts->screenright,false);
+    buttonprefs.Draw(ts->screenright,false);
+    DrawCompanion();
 }
-
-void App::HandleEventInPrefs()
-{
-	int keys = keysDown();
-	
-	if (keysDown() & (KEY_START | KEY_SELECT | KEY_B)) {
-		mode = APP_MODE_BROWSER;
-		browser_draw();
-	} else if (prefsSelected > 0 && (keysDown() & (key.right | key.r))) {
-		prefsSelected--;
-		PrefsDraw(false);
-	} else if (prefsSelected < PREFS_BUTTON_COUNT - 1 && (keysDown() & (KEY_LEFT | KEY_L))) {
-		prefsSelected++;
-		PrefsDraw(false);
-	} else if (keysDown() & KEY_A) {
-		PrefsButton();
-	} else if (keys & KEY_Y) {
-		CycleBrightness();
-		prefs->Write();
-	} else if (keysDown() & KEY_TOUCH) {
-		touchPosition touch;
-		touchRead(&touch);
-		touchPosition coord;
-
-		if(!orientation)
-		{
-			coord.px = 256 - touch.px;
-			coord.py = 192 - touch.py;
-		} else {
-			coord.px = touch.px;
-			coord.py = touch.py;
-		}
-		
-		if (buttonprefs.EnclosesPoint(coord.py, coord.px)) {
-			buttonprefs.Label("prefs");
-			mode = APP_MODE_BROWSER;
-			browser_draw();
-		} else {
-			for(u8 i = 0; i < PREFS_BUTTON_COUNT; i++) {
-				if (prefsButtons[i]->EnclosesPoint(coord.py, coord.px))
-				{
-					if (i != prefsSelected) {
-						prefsSelected = i;
-						PrefsDraw(false);
-					}
-					
-					if (i == PREFS_BUTTON_FONTSIZE) {
-						if (coord.py < 2 + 188 / 2) {
-							PrefsIncreasePixelSize();
-						} else {
-							PrefsDecreasePixelSize();
-						}
-					} else if (i == PREFS_BUTTON_PARASPACING) {
-						if (coord.py < 2 + 188 / 2) {
-							PrefsIncreaseParaspacing();
-						} else {
-							PrefsDecreaseParaspacing();
-						}
-					} else {
-						PrefsButton();
-					}
-					
-					break;
-				}
-			}
-		}
-	} else if (prefsSelected == PREFS_BUTTON_FONTSIZE && (keysDown() & key.up)) {
-		PrefsDecreasePixelSize();
-	} else if (prefsSelected == PREFS_BUTTON_FONTSIZE && (keysDown() & key.down)) {
-		PrefsIncreasePixelSize();
-	} else if (prefsSelected == PREFS_BUTTON_PARASPACING && (keysDown() & key.up)) {
-		PrefsDecreaseParaspacing();
-	} else if (prefsSelected == PREFS_BUTTON_PARASPACING && (keysDown() & key.down)) {
-		PrefsIncreaseParaspacing();
-	}
+void App::HandleEventInPrefs() {
+    int keys=keysDown(),row=0;
+    while(row<3 && order[prefsPage][row]!=prefsSelected) ++row;
+    if(keys&(KEY_START|KEY_SELECT|KEY_B)) {mode=APP_MODE_BROWSER;browser_draw();return;}
+    if(keys&KEY_Y) {CycleBrightness();prefs->Write();return;}
+    if(keys&KEY_TOUCH) {
+        touchPosition touch;touchRead(&touch);
+        int x=orientation?191-touch.py:touch.py,y=orientation?touch.px:255-touch.px;
+        if(buttonprefs.EnclosesPoint(x,y)) {mode=APP_MODE_BROWSER;browser_draw();return;}
+        if((!prefsPage && buttonnext.EnclosesPoint(x,y)) || (prefsPage && buttonprev.EnclosesPoint(x,y))) {
+            prefsPage=1-prefsPage;prefsSelected=order[prefsPage][0];PrefsDraw();return;
+        }
+        for(int r=0;r<4;++r) if(prefsButtons[order[prefsPage][r]]->EnclosesPoint(x,y)) {
+            prefsSelected=order[prefsPage][r];
+            if(prefsSelected==PREFS_BUTTON_FONTSIZE) {if(x<96) PrefsDecreasePixelSize();else PrefsIncreasePixelSize();}
+            else if(prefsSelected==PREFS_BUTTON_PARASPACING) {if(x<96) PrefsDecreaseParaspacing();else PrefsIncreaseParaspacing();}
+            else PrefsButton();
+            return;
+        }
+    } else if(keys&(key.right|key.r)) {
+        if(row>0) prefsSelected=order[prefsPage][row-1];
+        else {prefsPage=1-prefsPage;prefsSelected=order[prefsPage][3];}
+        PrefsDraw();
+    } else if(keys&(key.left|key.l)) {
+        if(row<3) prefsSelected=order[prefsPage][row+1];
+        else {prefsPage=1-prefsPage;prefsSelected=order[prefsPage][0];}
+        PrefsDraw();
+    } else if(keys&KEY_A) PrefsButton();
+    else if(keys&(key.up|key.down)) {
+        bool increase=(keys&key.down)!=0;
+        if(prefsSelected==PREFS_BUTTON_FONTSIZE) {if(increase) PrefsIncreasePixelSize();else PrefsDecreasePixelSize();}
+        else if(prefsSelected==PREFS_BUTTON_PARASPACING) {if(increase) PrefsIncreaseParaspacing();else PrefsDecreaseParaspacing();}
+        else PrefsButton();
+    }
 }
-
-void App::PrefsIncreasePixelSize()
-{
-	if (ts->pixelsize < 255) {
-		ts->pixelsize++;
-		PrefsRefreshButtonFontSize();
-		PrefsDraw();
-		bookcurrent = NULL;
-		prefs->Write();
-	}
+void App::PrefsIncreasePixelSize() {
+    if(ts->pixelsize<24) {++ts->pixelsize;prefs->Write();PrefsDraw();}
 }
-
-void App::PrefsDecreasePixelSize()
-{
-	if (ts->pixelsize > 1) {
-		ts->pixelsize--;
-		PrefsRefreshButtonFontSize();
-		PrefsDraw();
-		bookcurrent = NULL;
-		prefs->Write();
-	}
+void App::PrefsDecreasePixelSize() {
+    if(ts->pixelsize>8) {--ts->pixelsize;prefs->Write();PrefsDraw();}
 }
-
-void App::PrefsIncreaseParaspacing()
-{
-	if (paraspacing < 255) {
-		paraspacing++;
-		PrefsRefreshButtonParaspacing();
-		PrefsDraw();
-		bookcurrent = NULL;
-		prefs->Write();
-	}
+void App::PrefsIncreaseParaspacing() {
+    if(paraspacing<12) {++paraspacing;prefs->Write();PrefsDraw();}
 }
-
-void App::PrefsDecreaseParaspacing()
-{
-	if (paraspacing > 0) {
-		paraspacing--;
-		PrefsRefreshButtonParaspacing();
-		PrefsDraw();
-		bookcurrent = NULL;
-		prefs->Write();
-	}
+void App::PrefsDecreaseParaspacing() {
+    if(paraspacing>0) {--paraspacing;prefs->Write();PrefsDraw();}
 }
-
-void App::PrefsButton()
-{
-	if (prefsSelected == PREFS_BUTTON_FONT) {
-		mode = APP_MODE_PREFS_FONT;
-	} else if (prefsSelected == PREFS_BUTTON_FONT_BOLD) {
-		mode = APP_MODE_PREFS_FONT_BOLD;
-	} else if (prefsSelected == PREFS_BUTTON_FONT_ITALIC) {
-		mode = APP_MODE_PREFS_FONT_ITALIC;
-	}
-	PrintStatus("[loading fonts...]");
-	ts->SetScreen(ts->screenright);
-	ts->ClearScreen();
-	FontInit();
-	FontDraw();
-	PrintStatus("");
+void App::PrefsButton() {
+    if(prefsSelected==PREFS_BUTTON_THEME) {readingTheme=(readingTheme+1)%THEME_COUNT;ApplyTheme();prefs->Write();PrefsDraw();return;}
+    if(prefsSelected==PREFS_BUTTON_ANIMATION) {pageAnimation=!pageAnimation;prefs->Write();PrefsDraw();return;}
+    if(prefsSelected==PREFS_BUTTON_REOPEN) {reopen=!reopen;prefs->Write();PrefsDraw();return;}
+    if(prefsSelected==PREFS_BUTTON_FONTSIZE) {PrefsIncreasePixelSize();return;}
+    if(prefsSelected==PREFS_BUTTON_PARASPACING) {PrefsIncreaseParaspacing();return;}
+    if(prefsSelected==PREFS_BUTTON_FONT) mode=APP_MODE_PREFS_FONT;
+    else if(prefsSelected==PREFS_BUTTON_FONT_BOLD) mode=APP_MODE_PREFS_FONT_BOLD;
+    else if(prefsSelected==PREFS_BUTTON_FONT_ITALIC) mode=APP_MODE_PREFS_FONT_ITALIC;
+    else return;
+    FontInit();FontDraw();
 }

@@ -7,6 +7,7 @@
 #include "app.h"
 #include "prefs.h"
 #include "book.h"
+#include "reader_storage.h"
 
 #define PARSEBUFSIZE 1024*64
 
@@ -17,56 +18,45 @@ Prefs::Prefs(App *parent) { Init(); app = parent; }
 Prefs::~Prefs() {}
 
 //! \return 0: success, 255: file open failure, 254: no bytes read, 253: parse failure.
-int Prefs::Read()
-{
-	int err = 0;
-	parsedata_t pdata;
-	app->parse_init(&pdata);
-	pdata.prefs = this;
-		
-	FILE *fp = fopen(PREFSPATH,"r");
-	if (!fp) { err = 255; return err; }
-
-	XML_Parser p = XML_ParserCreate(NULL);
-	if(!p) { fclose(fp); err = 254; return err; }
-	XML_SetUnknownEncodingHandler(p,unknown_hndl,NULL);
-	XML_SetStartElementHandler(p, prefs_start_hndl);
-	XML_SetEndElementHandler(p, prefs_end_hndl);
-	XML_SetUserData(p, (void *)&pdata);
-	while (true)
-	{
-	 	void *buff = XML_GetBuffer(p, PARSEBUFSIZE);
-	 	int bytes_read = fread(buff, sizeof(char), PARSEBUFSIZE, fp);
-		if(bytes_read < 0) { err = 254; break; }
-		enum XML_Status status = 
-			XML_ParseBuffer(p, bytes_read, bytes_read == 0);
-		if(status == XML_STATUS_ERROR) { 
-			app->parse_error(p);
-			err = 253;
-			break;
-		}
-		if (bytes_read == 0) break;
-	}
-	XML_ParserFree(p);
-	fclose(fp);
-	return err;
-
-	struct stat st;
-	stat(PREFSPATH,&st);
-	struct timeval time;
-	gettimeofday(&time,NULL);
-	char msg[64];
-	sprintf(msg,"info : file timestamp %lld",st.st_mtime);
-	app->Log(msg);
-	sprintf(msg,"info : current time %lld",time.tv_sec);
-	app->Log(msg);
+namespace {
+bool parsePrefs(FILE* file,XML_Parser parser) {
+    char buffer[8192];
+    while(true) {
+        size_t count=fread(buffer,1,sizeof(buffer),file);
+        if(ferror(file)) return false;
+        if(XML_Parse(parser,buffer,count,count==0)==XML_STATUS_ERROR) return false;
+        if(!count) return true;
+    }
+}
+}
+int Prefs::Read(bool booksOnly) {
+    const char* paths[]={PREFSPATH,PREFSPATH ".bak","dslibris.xml"};
+    int error=255;
+    for(const char* path:paths) {
+        FILE* file=fopen(path,"r");if(!file) continue;
+        XML_Parser parser=XML_ParserCreate(NULL);
+        if(!parser) {fclose(file);return 254;}
+        // Validate before applying anything: interrupted XML cannot partially
+        // overwrite the defaults or a recovered backup.
+        if(!parsePrefs(file,parser)) {XML_ParserFree(parser);fclose(file);error=253;continue;}
+        rewind(file);XML_ParserReset(parser,NULL);
+        parsedata_t data;app->parse_init(&data);data.prefs=this;data.preferencesBookPass=booksOnly;
+        XML_SetUserData(parser,&data);
+        XML_SetStartElementHandler(parser,prefs_start_hndl);
+        XML_SetEndElementHandler(parser,prefs_end_hndl);
+        bool ok=parsePrefs(file,parser);
+        XML_ParserFree(parser);fclose(file);
+        if(ok) {recoveredBackup=std::string(path)==PREFSPATH ".bak";return 0;}
+        error=253;
+    }
+    return error;
 }
 
 //! \return Error code, 0: success.
 int Prefs::Write()
 {
 	int err = 0;
-	FILE* fp = fopen(PREFSPATH,"w");
+	FILE* fp = fopen(PREFSPATH ".tmp","w");
 	if(!fp) return 255;
 	
 	fprintf(fp, "<dslibris>\n");
@@ -76,14 +66,15 @@ int Prefs::Write()
 		app->brightness,
 		app->ts->GetInvert(),
 		app->orientation);
+	fprintf(fp,"\t<reading theme=\"%d\" animation=\"%d\" />\n",app->readingTheme,app->pageAnimation);
 	fprintf(fp,	"\t<margin top=\"%d\" left=\"%d\" bottom=\"%d\" right=\"%d\" />\n",	
 			app->ts->margin.top, app->ts->margin.left,
 			app->ts->margin.bottom, app->ts->margin.right);
  	fprintf(fp, "\t<font size=\"%d\" normal=\"%s\" bold=\"%s\" italic=\"%s\" />\n",
 		app->ts->GetPixelSize(),
-		app->ts->GetFontFile(TEXT_STYLE_REGULAR).c_str(),
-		app->ts->GetFontFile(TEXT_STYLE_BOLD).c_str(),
-		app->ts->GetFontFile(TEXT_STYLE_ITALIC).c_str());
+		ReaderStorage::xmlAttribute(app->ts->GetFontFile(TEXT_STYLE_REGULAR)).c_str(),
+		ReaderStorage::xmlAttribute(app->ts->GetFontFile(TEXT_STYLE_BOLD)).c_str(),
+		ReaderStorage::xmlAttribute(app->ts->GetFontFile(TEXT_STYLE_ITALIC)).c_str());
  	fprintf(fp, "\t<paragraph indent=\"%d\" spacing=\"%d\" />\n",
 			app->paraindent,
 			app->paraspacing);
@@ -93,13 +84,13 @@ int Prefs::Write()
 	for(u16 i=0;i<app->pagecount;i++) {}
 	*/
     fprintf(fp, "\t<books path=\"%s\" reopen=\"%d\">\n",
-    		app->bookdir.c_str(),
+		ReaderStorage::xmlAttribute(app->bookdir).c_str(),
     		app->reopen);
     
     for (u8 i = 0; i < app->bookcount; i++) {
         Book* book = app->books[i];
         fprintf(fp, "\t\t<book file=\"%s\" page=\"%d\"",
-                book->GetFileName(), book->GetPosition() + 1);
+                ReaderStorage::xmlAttribute(book->GetFileName()).c_str(), book->GetPosition() + 1);
 		if(app->bookcurrent == app->books[i]) fprintf(fp," current=\"1\"");
 		fprintf(fp,">\n");
 		std::list<u16>* bookmarks = book->GetBookmarks();
@@ -115,12 +106,16 @@ int Prefs::Write()
 	
 	fprintf(fp, "</dslibris>\n");
 	fprintf(fp, "\n");
-	fclose(fp);
-
-	return err;
+    bool ok=!ferror(fp);
+    if(fclose(fp)) ok=false;
+    if(!ok) {remove(PREFSPATH ".tmp");return 254;}
+    if(!ReaderStorage::commit(PREFSPATH ".tmp",PREFSPATH,recoveredBackup)) return 253;
+    recoveredBackup=false;
+    return err;
 }
 
 void Prefs::Init(){
+	recoveredBackup=false;
 	modtime = 0;  // fill this in with gettimeofday()
 	swapshoulder = FALSE;
 }

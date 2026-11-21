@@ -11,10 +11,11 @@ public:
 	Prefs();
 	Prefs(App *parent);
 	~Prefs();
-	int Read();
+	int Read(bool booksOnly=false);
 	int Write();
 	bool swapshoulder;
 private:
+	bool recoveredBackup;
 	void Init();
 };
 

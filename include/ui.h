@@ -1,20 +1,19 @@
-#ifndef _ui_h
-#define _ui_h
+#ifndef DSLIBRIS_UI_H
+#define DSLIBRIS_UI_H
+#include "text.h"
+#include "reader_visual.h"
 
-typedef struct {
-  u16 x;
-  u16 y;
-} coord_t;
-
-typedef struct {
-  coord_t origin;
-  coord_t extent;
-  u8 text[64];
-} button_t;
-
-  void button_init(button_t *b);
-  void button_label(button_t *b, char *text);
-  void button_draw(button_t *b, u16 *fb, bool highlight);
-  void button_move(button_t *b, u16 x, u16 y);
-
+// Restore all text state after drawing menus, without changing reading settings.
+struct MenuScope {
+    Text* t;
+    u16* screen;
+    u16 paper, ink, x, y;
+    u8 size;
+    int style;
+    MenuScope(Text* text, u16* target, int theme);
+    ~MenuScope();
+};
+void UiText(Text* t, int x, int baseline, const char* text, int width, int size, u16 ink);
+void UiHeader(Text* t, const char* title, const char* subtitle, int theme);
+const char* ThemeName(int theme);
 #endif

@@ -18,6 +18,8 @@
 #include "book.h"
 #include "button.h"
 #include "text.h"
+#include "reader_visual.h"
+#include <new>
 
 //! Book-related methods for App class.
 
@@ -31,9 +33,7 @@ void App::HandleEventInBook()
 		// page forward.
 		if (pagecurrent < pagecount-1)
 		{
-			pagecurrent++;
-			bookcurrent->SetPosition(pagecurrent);
-			bookcurrent->GetPage()->Draw(ts);
+			TurnPage(1);
 		}
 		prefs->Write();
 	}
@@ -43,9 +43,7 @@ void App::HandleEventInBook()
 		// page back.
 		if(pagecurrent > 0)
 		{
-			pagecurrent--;
-			bookcurrent->SetPosition(pagecurrent);
-			bookcurrent->GetPage()->Draw(ts);
+			TurnPage(-1);
 		}
 		prefs->Write();
 	}
@@ -57,7 +55,9 @@ void App::HandleEventInBook()
 		if (keys & KEY_X)
 		{
 			// toggle inverted text.
-			ts->SetInvert(!ts->GetInvert()); 	 
+			readingTheme=(readingTheme+1)%ReaderVisual::THEME_COUNT;
+            ApplyTheme();
+            prefs->Write();
 			bookcurrent->GetPage()->Draw(ts);
 		}
 
@@ -88,22 +88,18 @@ void App::HandleEventInBook()
 			// Turn page on touch.
 			touchPosition touch;
 			touchRead(&touch);
-			if ((orientation && touch.py > 95) || (touch.py < 96))
+			if (orientation ? touch.py > 95 : touch.py < 96)
 			{
 				if (pagecurrent > 0)
 				{
-					pagecurrent--;
-					bookcurrent->SetPosition(pagecurrent);
-					bookcurrent->GetPage()->Draw(ts);
+					TurnPage(-1);
 				}
 			}
 			else
 			{
 				if (pagecurrent < pagecount-1)
 				{
-					pagecurrent++;
-					bookcurrent->SetPosition(pagecurrent);
-					bookcurrent->GetPage()->Draw(ts);
+					TurnPage(1);
 				}
 			}
 			prefs->Write();
@@ -201,6 +197,7 @@ u8 App::OpenBook(void)
 	for (c=filename;c!=filename+strlen(filename) && *c!='.';c++);
 	
 	if(bookcurrent) bookcurrent->Close();
+	bookcurrent=NULL;
 	if (int err = bookselected->Open())
 	{
 		char msg[64];
@@ -233,41 +230,33 @@ void App::parse_error(XML_Parser p)
 	PrintStatus(msg);
 }
 
-void App::parse_init(parsedata_t *data)
-{
-	data->stacksize = 0;
-	data->pos = 0;
-	data->book = NULL;
-	data->prefs = NULL;
-	data->screen = 0;
-	data->pen.x = ts->margin.left;
-	data->pen.y = ts->margin.top;
-	data->linebegan = false;
-	data->bold = false;
-	data->italic = false;
-	strcpy((char*)data->buf,"");
-	data->cachefile = NULL;
-	data->buflen = 0;
-	data->status = 0;
-}
-
-void App::parse_push(parsedata_t *data, context_t context)
-{
-	data->stack[data->stacksize++] = context;
-}
-
-context_t App::parse_pop(parsedata_t *data)
-{
-	if (data->stacksize) data->stacksize--;
-	return data->stack[data->stacksize];
-}
-
-bool App::parse_in(parsedata_t *data, context_t context)
-{
-	u8 i;
-	for (i=0;i<data->stacksize;i++)
-	{
-		if (data->stack[i] == context) return true;
-	}
-	return false;
+void App::TurnPage(int direction) {
+    if(!bookcurrent || !bookcurrent->GetPageCount()) return;
+    int target=bookcurrent->GetPosition()+(direction>0?1:-1);
+    if(target<0 || target>=bookcurrent->GetPageCount()) return;
+    bookcurrent->SetPosition(target);
+    if(!pageAnimation) {bookcurrent->GetPage()->Draw(ts);return;}
+    const int pixels=256*256;
+    u16* nextLeft=new(std::nothrow) u16[pixels];
+    u16* nextRight=new(std::nothrow) u16[pixels];
+    if(!nextLeft || !nextRight) {
+        delete[] nextLeft;delete[] nextRight;
+        bookcurrent->GetPage()->Draw(ts);return;
+    }
+    u16* left=ts->screenleft;u16* right=ts->screenright;
+    ts->screenleft=nextLeft;ts->screenright=nextRight;
+    bookcurrent->GetPage()->Draw(ts);
+    ts->screenleft=left;ts->screenright=right;ts->SetScreen(right);
+    ReaderVisual::Surface a={left,192,256,256}, b={right,192,256,256};
+    int previous=0;
+    for(int frame=1;frame<=12;++frame) {
+        // Ease out over approximately 200 ms at 60 Hz, excluding render time.
+        int remaining=12-frame;
+        int progress=192-(192*remaining*remaining)/144;
+        swiWaitForVBlank();
+        ReaderVisual::advanceTurn(a,nextLeft,previous,progress,direction);
+        ReaderVisual::advanceTurn(b,nextRight,previous,progress,direction);
+        previous=progress;
+    }
+    delete[] nextLeft;delete[] nextRight;
 }

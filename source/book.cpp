@@ -135,6 +135,8 @@ void Book::SetPage(u16 index)
 
 void Book::SetPosition(int pos)
 {
+	if(pos<0) pos=0;
+	if(!pages.empty() && pos>=(int)pages.size()) pos=pages.size()-1;
 	position = pos;
 }
 
@@ -178,6 +180,7 @@ u8 Book::Open() {
 
 	//	if( access( fname.c_str(), F_OK ) != -1 ) {
 	FILE *fp = fopen("/cache.dat", "r");
+	if(fp && !app->cache) {fclose(fp);fp=NULL;}
 	if (fp && app->cache) {
 		// Restore from cache.
 		fclose(fp);
@@ -198,8 +201,9 @@ u8 Book::Open() {
 			err = 255;
 		if (app->cache) Cache();
 	}
-	if(!err)
-		if(position > (int)pages.size()) position = pages.size()-1;
+	if(!err && pages.empty()) err=254;
+	if(err) Close();
+	else if(position<0 || position >= (int)pages.size()) position=0;
 
 	return (u8)err;
 }
@@ -231,7 +235,7 @@ u8 Book::Parse(bool fulltext)
 	}
 	
 	char path[MAXPATHLEN];
-	sprintf(path,"%s%s",GetFolderName(),GetFileName());
+	snprintf(path,sizeof(path),"%s/%s",GetFolderName(),GetFileName());
 	FILE *fp = fopen(path,"r");
 	if (!fp)
 	{
@@ -242,7 +246,7 @@ u8 Book::Parse(bool fulltext)
 	
 	parsedata_t parsedata;
 	app->parse_init(&parsedata);
-	parsedata.cachefile = fopen("/cache.dat", "w");
+	parsedata.cachefile = NULL;
 	parsedata.book = this;
 	
 	XML_Parser p = XML_ParserCreate(NULL);
@@ -284,6 +288,7 @@ u8 Book::Parse(bool fulltext)
 	}
 
 	XML_ParserFree(p);
+	if(parsedata.status>=2) rc=254;
 	fclose(fp);
 	delete [] filebuf;
 
@@ -308,5 +313,6 @@ void Book::Restore()
 
 void Book::Close()
 {
-	pages.erase(pages.begin(), pages.end());
+	for(auto page:pages) delete page;
+	pages.clear();
 }

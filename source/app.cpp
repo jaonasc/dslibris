@@ -44,6 +44,7 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
 #include "button.h"
 #include "text.h"
 #include "version.h"
+#include "ui.h"
 
 // less-than operator to compare books by title
 static bool book_title_lessthan(Book* a, Book* b) {
@@ -69,6 +70,9 @@ App::App()
 	cache = false;
 	console = false;
 	orientation = false;
+	readingTheme = ReaderVisual::PAPER;
+	pageAnimation = true;
+	prefsPage = 0;
 	paraspacing = 1;
 	paraindent = 0;
 	brightness = 1;
@@ -95,7 +99,7 @@ App::App()
 
 App::~App()
 {
-	delete prefs;
+	// prefs points to the myprefs member, which is destroyed automatically.
 	delete ts;
 	vector<Book*>::iterator it;
 	for(it=books.begin();it!=books.end();it++)
@@ -163,6 +167,7 @@ int App::Run(void)
 		sprintf(msg,"fatal: No book directory \'%s\'.\n",
 			bookdir.c_str());
 		Log(msg);
+		return 255;
 	}
 	
 	struct dirent *ent;
@@ -226,7 +231,7 @@ int App::Run(void)
 	
 	// Read preferences, pass 2, to bind preferences to books.
 	
-   	if(int parseerror = prefs->Read())
+	if(int parseerror = prefs->Read(true))
 	{
 		sprintf(msg,"warn : can't read prefs (%d).\n",parseerror);
 		Log(msg);
@@ -251,6 +256,7 @@ int App::Run(void)
 	// Bring up displays.
 	console = false;
 	InitScreens();
+	ApplyTheme();
 	if(orientation) lcdSwap();
 	if (prefs->swapshoulder)
 	{
@@ -417,10 +423,11 @@ void App::Log(const char *format, const char *msg)
 	if(console)
 	{
 		char s[1024];
-		sprintf(s,format,msg);
-		iprintf(s);
+		snprintf(s,sizeof(s),format,msg);
+		iprintf("%s",s);
 	}
 	FILE *logfile = fopen(LOGFILEPATH,"a");
+	if(!logfile) return;
 	fprintf(logfile,format,msg);
 	fclose(logfile);
 }
